@@ -1,5 +1,4 @@
 import pandas as pd
-
 import numpy as np
 import os
 import json
@@ -30,16 +29,13 @@ def get_db_cursor():
 conn = get_db_cursor()
 cur = conn.cursor()
 
-df = pd.read_csv("inputFiles/KALRO Test protocol - Sheet1 (5).csv")
+df = pd.read_csv("inputFiles/Apollo Agriculture Test Protocol.csv")
 
 df.columns = [i.lower() for i in df.columns]
-approval = pd.read_excel("inputFiles/batch-approval-batch_9507 (4).xlsx",sheet_name="Recommendations")
+approval = pd.read_excel("inputFiles/batch-approval-batch_9366.xlsx",sheet_name="Recommendations")
 approval.columns  = [i.lower() for i in approval.columns]
 approval['crop_code'] = [str(i).split("-")[-1] for i in approval['barcode'] ]
 approval['barcode'] = ["-".join(str(i).split("-")[:-1]) for i in approval['barcode'] ]
-df = df.loc[df['barcode'].isin(approval['barcode'].values)]
-
-
 
 soil_correction_cols = [i for i in df.columns if "soil correction" in i]
 soil_correction_cols.append("barcode")
@@ -61,22 +57,16 @@ for col in soil_correction_requirements.columns:
     print(col)
     if("calcitic lime" in soil_correction_requirements[col].values):
         col_name = "soil correction:calcitic lime"
-        if col_name not in soil_correction_recommendations.columns:
-            soil_correction_recommendations[col_name] = np.nan
         a = soil_correction_requirements[[col]].isna()[col].values
         b = soil_correction_recommendations[[col_name]].isna()[col_name].values
         soil_correction_df[col_name] = np.logical_xor(a,b)
     if("dolomitic lime" in soil_correction_requirements[col].values):
         col_name = "soil correction:dolomitic lime"
-        if col_name not in soil_correction_recommendations.columns:
-            soil_correction_recommendations[col_name] = np.nan
         a = soil_correction_requirements[[col]].isna()[col].values
         b = soil_correction_recommendations[[col_name]].isna()[col_name].values
         soil_correction_df[col_name] = np.logical_xor(a,b)
     if("manure" in col):
         col_name = "soil correction:manure/compost **"
-        if col_name not in soil_correction_recommendations.columns:
-            soil_correction_recommendations[col_name] = np.nan
         try:
             a = (soil_correction_requirements[col])
             b = (soil_correction_recommendations[col_name])
@@ -107,10 +97,10 @@ for col in planting_requirements.columns:
     print(col)
     reqs = np.unique(planting_requirements[col].dropna().values)
     if(len(reqs) > 1):
-        raise Exception(f"Columns are: {','.join(reqs)}. Each column can only have one fertiliser type. Create a new column called PLANTING for extra fertiliser types.")
+        raise Exception("Each column can only have one fertiliser type. Create a new column called PLANTING for extra fertiliser types.")
         break
     if(reqs in planting_fertilisers):
-        raise Exception(f"{','.join(reqs)}. is already in another column. Ensure that each fertiliser type is only in one column.")
+        raise Exception(f"{reqs} is already in another column. Ensure that each fertiliser type is only in one column.")
         break
     if(len(reqs) == 0):
         continue
@@ -119,8 +109,7 @@ for col in planting_requirements.columns:
     col_name = f"PLANTING:{subtype}".lower()
     print(col_name)
     planting_requirements = planting_requirements.rename(columns={col: col_name})
-    if col_name not in planting_recommendations.columns:
-        planting_recommendations[col_name] = np.nan
+    
     a = planting_recommendations[[col_name]].isna()[col_name].values
     b = planting_requirements[[col_name]].isna()[col_name].values
     print(a)
@@ -148,10 +137,10 @@ for col in top_dress_requirements.columns:
     print(col)
     reqs = np.unique(top_dress_requirements[col].dropna().values)
     if(len(reqs) > 1):
-        raise Exception(f"Columns are: {','.join(reqs)}. Each column can only have one fertiliser type. Create a new column called TOP DRESS for extra fertiliser types.")
+        raise Exception("Each column can only have one fertiliser type. Create a new column called TOP DRESS for extra fertiliser types.")
         break
     if(reqs in top_dress_fertilizers):
-        raise Exception(f"{','.join(reqs)} is already in another column. Ensure that each fertiliser type is only in one column.")
+        raise Exception(f"{reqs} is already in another column. Ensure that each fertiliser type is only in one column.")
         break
     if(len(reqs) == 0):
         continue
@@ -159,8 +148,6 @@ for col in top_dress_requirements.columns:
     print(subtype)
     col_name = f"TOP DRESS:{subtype}".lower()
     print(col_name)
-    if col_name not in top_dress_recommendations.columns:
-        top_dress_recommendations[col_name] = np.nan
     a = top_dress_recommendations[[col_name]].isna()[col_name].values
     b = top_dress_requirements[[col]].isna()[col].values
     print(a)
@@ -173,19 +160,19 @@ top_dress_df = top_dress_df.replace(False,np.nan).replace(True,False)
 
 final_output = pd.merge(soil_correction_df, planting_df, how="inner", on="barcode")
 final_output = pd.merge(final_output, top_dress_df, how="inner", on="barcode")
-
 final_output = final_output.set_index("barcode")
-print("---------------------",final_output)
+
 final_output['Approved'] = np.where(final_output.notnull().sum(axis=1) > 0, "fail","pass")
 
 
-crops = pd.read_sql(f"SELECT id, LOWER(name) as name from crop c",con=conn)
+crops = pd.read_sql(f"SELECT id, LOWER(name) as name from crop c WHERE c.name IN {tuple(df['crop'])}",con=conn)
 crops = crops.drop_duplicates(subset="name")
 crops = crops.set_index("name")
-crops_dict = crops.to_dict()['id']
-comparison_df = pd.read_csv("inputFiles/KALRO Test protocol - Sheet1 (5).csv")    
+crops_dict = crops.to_dict()
+
+comparison_df = pd.read_csv("inputFiles/client_approval_settings.csv")    
 comparison_df['crop'] = [ i.lower() for i in comparison_df['crop'].values]
-comparison_df['id'] = comparison_df['crop'].apply(lambda x: crops_dict[x] if x in crops_dict.keys() else "")
+comparison_df['id'] = [ crops_dict['id'][i] for i in comparison_df['crop'].values ]
 comparison_df['barcode'] =  comparison_df['barcode'].astype("str")  +"-" + comparison_df['id'].astype("str")
 
 spectral_sample_crop = pd.read_sql(f"SELECT barcode, report_data FROM SpectralSampleCrop WHERE barcode IN {tuple(comparison_df['barcode'].values)}",con=conn)
@@ -205,7 +192,6 @@ for index, row in spectral_sample_crop.iterrows():
     results.status = results.status.astype("int")
     report_data = pd.concat([report_data,results])
 
-print(report_data)
 report_data = report_data.pivot_table(index="barcode", columns="chemical_name", values="status")
 report_data = report_data.replace(0,"very low").replace(1,"low").replace(2,"optimum").replace(3,"high").replace(4,"very high")
 
@@ -222,8 +208,7 @@ for col in report_data.columns:
 
 reports.index = [ "-".join(i.split("-")[:-1]) for i in reports.index ]
 reports = reports.replace(True, np.nan)
-print(final_output.index)
-print(reports.index)
+
 final_output = pd.merge(final_output, reports, left_index=True, right_index=True)
 
 report_data.to_csv("outputFiles/reports.csv")
